@@ -1,0 +1,509 @@
+#!/bin/bash
+#
+# dir-mark -- one printable character, one directory, the way vim marks do.
+#
+# A mark names a directory and nothing else. `dir-mark path m` prints the one
+# `m` names and `dir-mark pick` asks with fzf, which makes both of them
+# pickers in the ordinary sense: a program that prints a path, ready to be
+# fed to anything that takes one.
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dir-mark"
+MARKS_FILE="${DIR_MARK_FILE:-$STATE_DIR/marks.json}"
+mkdir -p "$(dirname "$MARKS_FILE")"
+
+usage() {
+  cat <<'EOF'
+dir-mark -- one character, one directory
+
+Usage
+  dir-mark set <char> [path]     # Mark a directory (path defaults to the current directory)
+  dir-mark remove <char>         # Remove a mark
+  dir-mark path <char>           # Print the directory a mark points at
+  dir-mark pick                  # Choose a mark with fzf and print its directory (ctrl-x removes)
+  dir-mark list                  # Every mark as "char<TAB>directory"
+  dir-mark status [path]         # Marks with a tmux session open at them, for a status line
+                                 # (-s, --style and -c, --current-style set its tmux styles)
+  dir-mark help                  # Show help message
+
+Marks
+  A mark is one printable character pointing at one directory. Setting a
+  character that is already set replaces it, the way `m` does in vim.
+
+  `path` and `pick` print a directory and nothing else, so they compose with
+  anything that takes one:
+
+  cd "$(dir-mark path m)"
+  tsm via dir-mark path m
+  tsm via dir-mark pick
+
+Storage
+  ${XDG_STATE_HOME:-~/.local/state}/dir-mark/marks.json, or $DIR_MARK_FILE.
+
+See https://github.com/ryanburda/dir-mark for more documentation
+EOF
+}
+
+####################
+# helper functions #
+####################
+notify() {
+  # Show a message: tmux display-message inside tmux, stderr otherwise.
+  # stderr because several callers run inside a command substitution whose
+  # stdout is their return value.
+  local msg="$1"
+  if [ -n "$TMUX" ]; then
+    tmux display-message "$msg"
+  else
+    echo "$msg" >&2
+  fi
+}
+
+refresh_status() {
+  # Redraw every attached client's status line. tmux's own refresh-client
+  # reaches only one client, and a status line passing #{session_path} gives
+  # each client a #() job of its own, so all of them need the nudge. A no-op
+  # outside tmux, where there is nothing to redraw.
+  local client
+
+  while IFS= read -r client; do
+    [ -n "$client" ] && tmux refresh-client -S -t "$client" 2>/dev/null
+  done < <(tmux list-clients -F '#{client_name}' 2>/dev/null)
+}
+
+dir_mark_self() {
+  # Echo the path to re-run dir-mark by. A bare name is resolved against the
+  # current PATH, since fzf runs the command later in an environment whose
+  # PATH may differ.
+  local self="$0"
+
+  case "$self" in
+    */*) ;;
+    *) self=$(command -v -- "$self" 2>/dev/null) || self="$0" ;;
+  esac
+
+  echo "$self"
+}
+
+check_mark_char() {
+  # Exit unless $1 can key a mark: a single printable ASCII character.
+  # Checked by code point rather than a [!-~] range, which outside the C
+  # locale is read in collation order.
+  #
+  # Args:
+  #   $1: char: the character to check
+  local char="$1" code
+
+  if [ "${#char}" -eq 1 ]; then
+    code=$(printf '%d' "'$char" 2>/dev/null)
+    if [ -n "$code" ] && [ "$code" -ge 33 ] && [ "$code" -le 126 ]; then
+      return 0
+    fi
+  fi
+
+  notify "Error: a mark is keyed by a single printable character"
+  exit 1
+}
+
+read_marks() {
+  # Emit one "char<TAB>directory" line per mark, sorted by character.
+  #
+  # Marks are a flat JSON object of character -> directory, parsed here
+  # rather than with jq to avoid the dependency: the file holds only strings,
+  # and only the escapes write_marks produces. A pair whose key is not a
+  # single character, or whose value is empty or holds a tab or newline, is
+  # dropped: dir-mark cannot write one, and it would split a line callers
+  # read whole.
+  [ -f "$MARKS_FILE" ] || return 0
+
+  awk '
+    { json = json $0 "\n" }
+
+    # Decodes the JSON string starting at i (its opening quote), leaving i on
+    # the character after its closing quote.
+    function read_string(   out, c, e) {
+      out = ""
+      i++
+      while (i <= n) {
+        c = substr(json, i, 1)
+        if (c == "\"") { i++; break }
+        if (c == "\\") {
+          e = substr(json, i + 1, 1)
+          if (e == "n") c = "\n"
+          else if (e == "t") c = "\t"
+          else if (e == "r") c = "\r"
+          else if (e == "b") c = "\b"
+          else if (e == "f") c = "\f"
+          else c = e
+          i++
+        }
+        out = out c
+        i++
+      }
+      return out
+    }
+
+    END {
+      n = length(json)
+      i = 1
+
+      # The object is flat, so its strings alternate key, value.
+      while (i <= n) {
+        if (substr(json, i, 1) != "\"") { i++; continue }
+        key = read_string()
+
+        # Skip the colon and whitespace between key and value.
+        while (i <= n && substr(json, i, 1) != "\"") i++
+        if (i > n) break
+        val = read_string()
+
+        if (length(key) == 1 && val != "" && val !~ /[\t\n]/) print key "\t" val
+      }
+    }
+  ' "$MARKS_FILE" | LC_ALL=C sort
+}
+
+write_marks() {
+  # Read "char<TAB>directory" lines on stdin and replace the store with them.
+  # Written to a temp file and moved into place, so an interrupted write
+  # leaves the old marks rather than half a file.
+  local tmp="$MARKS_FILE.tmp"
+
+  awk -F'\t' '
+    # A character at a time rather than gsub, whose replacement text has
+    # escaping rules of its own.
+    function escape(s,   out, i, c) {
+      out = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "\"" || c == "\\") out = out "\\"
+        out = out c
+      }
+      return out
+    }
+
+    BEGIN { printf "{\n" }
+    NF >= 2 { printf "%s  \"%s\": \"%s\"", (count++ ? ",\n" : ""), escape($1), escape($2) }
+    END { printf "%s}\n", (count ? "\n" : "") }
+  ' > "$tmp" && mv "$tmp" "$MARKS_FILE"
+}
+
+mark_directory() {
+  # Echo the directory marked at $1, or nothing with a non-zero status.
+  #
+  # Args:
+  #   $1: char: the mark character to look up
+  local char="$1" c dir
+
+  while IFS=$'\t' read -r c dir; do
+    if [ "$c" = "$char" ]; then
+      echo "$dir"
+      return 0
+    fi
+  done < <(read_marks)
+
+  return 1
+}
+
+without_mark() {
+  # Filter "char<TAB>directory" lines on stdin, dropping the mark keyed by
+  # $1. Passed via the environment: -v would expand backslashes.
+  #
+  # Args:
+  #   $1: char: the mark character to drop
+  DIR_MARK_CHAR="$1" awk -F'\t' '
+    BEGIN { char = ENVIRON["DIR_MARK_CHAR"] }
+    $1 != char
+  '
+}
+
+mark_entries() {
+  # The picker's rows: character and directory, tab separated, followed by
+  # the "char directory" column that is displayed. fzf shows only the third
+  # field (--with-nth); the first two ride along for its bindings.
+  local char dir
+
+  while IFS=$'\t' read -r char dir; do
+    printf '%s\t%s\t%s    %s\n' "$char" "$dir" "$char" "${dir/#"$HOME"/\~}"
+  done < <(read_marks)
+}
+
+#################
+# api functions #
+#################
+mark_set() {
+  # Mark a directory at a character, replacing whatever that character was
+  # marking before -- the way setting a vim mark that is set does.
+  #
+  # Args:
+  #   $1: char: the mark character
+  #   $2: path: directory to mark (default: the current directory)
+  local char="$1" path="${2:-$PWD}"
+
+  path="${path/#\~/$HOME}"
+
+  if [ ! -d "$path" ]; then
+    notify "Error: Directory '$path' does not exist"
+    exit 1
+  fi
+
+  path=$(cd "$path" && pwd -P)
+
+  if [ -z "$path" ]; then
+    notify "Error: Directory '${2:-$PWD}' could not be resolved"
+    exit 1
+  fi
+
+  # Rejected rather than escaped: a control character would have to survive
+  # JSON, whole-line reads, and the picker, and no directory worth marking
+  # has one.
+  case "$path" in
+    *[[:cntrl:]]*)
+      notify "Error: '$path' cannot be marked: its path contains a control character"
+      exit 1
+      ;;
+  esac
+
+  # dir-mark does not ask for the character itself: inside tmux a key binding
+  # asks with command-prompt -1 and passes the answer in (see the README),
+  # which is the only way it was ever reached.
+  if [ -z "$char" ]; then
+    notify "Error: 'dir-mark set' needs a character to mark ${path/#"$HOME"/\~} at"
+    exit 1
+  fi
+
+  check_mark_char "$char"
+
+  {
+    read_marks | without_mark "$char"
+    printf '%s\t%s\n' "$char" "$path"
+  } | LC_ALL=C sort | write_marks
+
+  # What the status line shows just changed, and no session was created or
+  # killed for a tmux hook to notice it.
+  refresh_status
+
+  notify "Mark set: $char -> $path"
+}
+
+mark_remove() {
+  # Remove a mark.
+  #
+  # Args:
+  #   $1: char: the mark character to remove
+  local char="$1"
+
+  if [ -z "$char" ]; then
+    notify "Error: 'dir-mark remove' needs a character"
+    exit 1
+  fi
+
+  check_mark_char "$char"
+
+  if ! mark_directory "$char" > /dev/null; then
+    notify "Error: No mark '$char'"
+    exit 1
+  fi
+
+  read_marks | without_mark "$char" | write_marks
+
+  refresh_status
+
+  notify "Mark removed: $char"
+}
+
+mark_path() {
+  # Print the directory a mark points at. A picker in its own right: it names
+  # a directory and nothing else, so
+  #
+  #   tsm via dir-mark path m
+  #
+  # goes straight to a session at whatever m marks, skipping the fzf `pick`
+  # opens.
+  #
+  # Args:
+  #   $1: char: the mark character to look up
+  local char="$1"
+
+  if [ -z "$char" ]; then
+    notify "Error: 'dir-mark path' needs a character"
+    exit 1
+  fi
+
+  check_mark_char "$char"
+
+  local dir
+  if ! dir=$(mark_directory "$char"); then
+    notify "Error: No mark '$char'"
+    exit 1
+  fi
+
+  printf '%s\n' "$dir"
+}
+
+mark_pick() {
+  # Choose a mark with fzf and print its directory. Backing out prints
+  # nothing and succeeds, the way any picker declines to answer.
+  if ! command -v fzf > /dev/null 2>&1; then
+    notify "Error: 'dir-mark pick' needs fzf on PATH"
+    exit 1
+  fi
+
+  local entries
+  entries=$(mark_entries)
+
+  if [ -z "$entries" ]; then
+    notify "No marks set"
+    exit 1
+  fi
+
+  # ctrl-x removes the mark under the cursor, then rebuilds the list from
+  # disk. fzf hands a binding to a shell, so dir-mark's path is quoted for
+  # one; fzf itself quotes {1}.
+  local self
+  printf -v self '%q' "$(dir_mark_self)"
+
+  local selected
+  selected=$(printf '%s\n' "$entries" | fzf \
+    --cycle \
+    --delimiter=$'\t' \
+    --with-nth=3 \
+    --prompt "Mark > " \
+    --header $':: \e[33mctrl-x\e[0m to \e[31mremove\e[0m' \
+    --bind "ctrl-x:execute-silent($self remove {1})+reload($self _entries)")
+
+  [ -n "$selected" ] || exit 0
+
+  # The row carries the directory in its second field, so the answer is the
+  # marked path rather than the ~ the row displayed.
+  local row="${selected#*$'\t'}"
+  printf '%s\n' "${row%%$'\t'*}"
+}
+
+mark_status() {
+  # Print the characters of the marks with a tmux session open at them, the
+  # current session's styled differently. Only marks with a session open are
+  # shown, so the line stays short. Nothing is notified: this runs on every
+  # status line redraw.
+  #
+  # Args:
+  #   $1: path: the directory of the session to treat as the current one
+  #       (default: the session tmux reports as current)
+  #   -s, --style: tmux style for the other sessions' characters
+  #   -c, --current-style: tmux style for the current session's character
+  local style="dim" current_style="fg=yellow,bold" current="" current_given=""
+
+  # Styles are given without their #[] wrapper, so a status line format
+  # holding one does not have to escape it.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -s | --style | -c | --current-style)
+        if [ $# -lt 2 ]; then
+          notify "Error: '$1' needs a tmux style"
+          exit 1
+        fi
+        case "$1" in
+          -s | --style) style="$2" ;;
+          -c | --current-style) current_style="$2" ;;
+        esac
+        shift 2
+        ;;
+      -*)
+        notify "Error: Unknown option '$1' for 'dir-mark status'"
+        exit 1
+        ;;
+      *)
+        if [ -n "$current_given" ]; then
+          notify "Error: Too many arguments for 'dir-mark status'"
+          exit 1
+        fi
+        current="$1"
+        current_given=1
+        shift
+        ;;
+    esac
+  done
+
+  local open
+  open=$(tmux list-sessions -F '#{session_path}' 2>/dev/null)
+  [ -n "$open" ] || return 0
+
+  # Which session is current must be given by whoever draws the status line:
+  # tmux runs a #() command without a client and shares its output between
+  # them all, so asking here would answer the same for every client. A status
+  # line passes #{session_path}, expanded per client. Asking is the fallback
+  # for a shell with a session of its own.
+  if [ -z "$current_given" ] && [ -n "$TMUX" ]; then
+    current=$(tmux display-message -p '#{session_path}' 2>/dev/null)
+  fi
+
+  # Each character is padded inside its own style, so a style with a
+  # background reads as a block. Each style is preceded by a reset, because
+  # tmux styles accumulate.
+  read_marks | DIR_MARK_OPEN_PATHS="$open" DIR_MARK_CURRENT_PATH="$current" \
+    DIR_MARK_STYLE="$style" DIR_MARK_CURRENT_STYLE="$current_style" awk -F'\t' '
+      BEGIN {
+        n = split(ENVIRON["DIR_MARK_OPEN_PATHS"], paths, "\n")
+        for (i = 1; i <= n; i++) if (paths[i] != "") open[paths[i]]
+        current = ENVIRON["DIR_MARK_CURRENT_PATH"]
+        style = ENVIRON["DIR_MARK_STYLE"]
+        current_style = ENVIRON["DIR_MARK_CURRENT_STYLE"]
+      }
+
+      $2 in open {
+        out = out "#[default]#[" (current != "" && $2 == current ? current_style : style) "] " $1 " "
+      }
+
+      END { if (out != "") print out "#[default]" }
+    '
+}
+
+# Parse arguments
+if [ $# -eq 0 ]; then
+  usage
+  exit 0
+fi
+
+command="$1"
+shift
+
+case "$command" in
+  set)
+    mark_set "$1" "$2"
+    ;;
+  remove)
+    mark_remove "$1"
+    ;;
+  path)
+    mark_path "$1"
+    ;;
+  pick)
+    if [ $# -gt 0 ]; then
+      notify "Error: 'dir-mark pick' takes no arguments"
+      exit 1
+    fi
+    mark_pick
+    ;;
+  list)
+    read_marks
+    ;;
+  status)
+    mark_status "$@"
+    ;;
+  _entries)
+    # Internal: rebuilds the picker's rows for its reload binding.
+    mark_entries
+    ;;
+  _refresh-status)
+    # Internal: invoked by the session-created/session-closed hooks (see
+    # README).
+    refresh_status
+    ;;
+  help | -h | --help)
+    usage
+    ;;
+  *)
+    notify "Error: Unknown command '$command'"
+    usage
+    exit 1
+    ;;
+esac
