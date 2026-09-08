@@ -15,13 +15,13 @@ complete -c dir-mark -f
 # Subcommands
 complete -c dir-mark -n '__fish_use_subcommand' -a set -d 'Mark a directory at a character'
 complete -c dir-mark -n '__fish_use_subcommand' -a remove -d 'Remove a mark'
-complete -c dir-mark -n '__fish_use_subcommand' -a path -d 'Print the directory a mark points at'
+complete -c dir-mark -n '__fish_use_subcommand' -a get -d 'Print the directory a mark points at'
 complete -c dir-mark -n '__fish_use_subcommand' -a pick -d 'Choose a mark with fzf and print its directory'
 complete -c dir-mark -n '__fish_use_subcommand' -a list -d 'Every mark as "char<TAB>directory"'
 complete -c dir-mark -n '__fish_use_subcommand' -a status -d 'Marks with a tmux session open at them, for a status line'
 complete -c dir-mark -n '__fish_use_subcommand' -a help -d 'Show help message'
 
 # Subcommand arguments
-complete -c dir-mark -n '__fish_seen_subcommand_from remove path' -xa '(__dir_mark_marks)'
+complete -c dir-mark -n '__fish_seen_subcommand_from remove get' -xa '(__dir_mark_marks)'
 complete -c dir-mark -n '__fish_seen_subcommand_from set' -ra '(__fish_complete_directories)'
 complete -c dir-mark -n '__fish_seen_subcommand_from status' -xa '-s --style -c --current-style'

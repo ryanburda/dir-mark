@@ -14,7 +14,7 @@ _dir_mark_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     cmd="${COMP_WORDS[1]}"
 
-    subcmds="set remove path pick list status help"
+    subcmds="set remove get pick list status help"
 
     # Completing the subcommand itself
     if [ "$COMP_CWORD" -eq 1 ]; then
@@ -24,7 +24,7 @@ _dir_mark_completions() {
 
     # Completing an argument to a subcommand
     case "$cmd" in
-        remove|path)
+        remove|get)
             COMPREPLY=($(compgen -W "$(_dir_mark_chars)" -- "$cur"))
             return 0
             ;;

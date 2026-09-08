@@ -20,7 +20,7 @@ _dir_mark_commands() {
     local commands=(
         'set:Mark a directory at a character'
         'remove:Remove a mark'
-        'path:Print the directory a mark points at'
+        'get:Print the directory a mark points at'
         'pick:Choose a mark with fzf and print its directory'
         'list:Every mark as "char<TAB>directory"'
         'status:Marks with a tmux session open at them, for a status line'
@@ -40,7 +40,7 @@ _dir_mark() {
         && return 0
 
     case "$line[1]" in
-        remove|path)
+        remove|get)
             _dir_mark_marks
             ;;
         set)

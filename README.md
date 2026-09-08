@@ -1,12 +1,15 @@
 # dir-mark
 
+A directory bookmarking tool intended to be used with
+[tmux-session-manager](https://github.com/ryanburda/tmux-session-manager)
+
 `dir-mark` maps one printable character to one directory, the way vim marks do. That's its
 whole job.
 
 ```bash
 dir-mark set m ~/code/api      # m is now ~/code/api
-dir-mark path m                # /home/you/code/api
-cd "$(dir-mark path m)"
+dir-mark get m                # /home/you/code/api
+cd "$(dir-mark get m)"
 ```
 
 Marks are for the handful of directories you return to constantly -- the ones a fuzzy finder
@@ -14,14 +17,14 @@ makes you type a few characters of every time, when you already know exactly whe
 going. There is no ranking, no history and no decay: `m` points where you put it until you put
 it somewhere else.
 
-`path` and `pick` print a directory on stdout and nothing else, which is the whole interface to
+`get` and `pick` print a directory on stdout and nothing else, which is the whole interface to
 everything downstream:
 
 ```bash
 cd "$(dir-mark pick)"                  # choose one with fzf
-tsm via dir-mark path m                # a tmux session at whatever m marks
+tsm via dir-mark get m                # a tmux session at whatever m marks
 tsm via dir-mark pick                  # ...or at one you choose
-nvim "$(dir-mark path n)/init.lua"
+nvim "$(dir-mark get n)/init.lua"
 ```
 
 ## Install
@@ -92,7 +95,7 @@ tmux that is what `command-prompt -1` is for, which reaches all three by a singl
 ```tmux
 bind-key m command-prompt -1 -p "Set mark:"    "run-shell -b \"dir-mark set '%%%'\""
 bind-key M command-prompt -1 -p "Remove mark:" "run-shell -b \"dir-mark remove '%%%'\""
-bind-key \' command-prompt -1 -p "Go to mark:" "run-shell -b \"tsm via dir-mark path '%%%'\""
+bind-key \' command-prompt -1 -p "Go to mark:" "run-shell -b \"tsm via dir-mark get '%%%'\""
 bind-key b popup -E "tsm via dir-mark pick"
 ```
 
@@ -127,7 +130,7 @@ bind-key m command-prompt -1 -p "Set mark:" "run-shell -b \"dir-mark set '%%%' '
 ```bash
 dir-mark set <char> [path]     # Mark a directory (path defaults to the current directory)
 dir-mark remove <char>         # Remove a mark
-dir-mark path <char>           # Print the directory a mark points at
+dir-mark get <char>            # Print the directory a mark points at
 dir-mark pick                  # Choose a mark with fzf and print its directory
 dir-mark list                  # Every mark as "char<TAB>directory"
 dir-mark status [path]         # Marks with a tmux session open at them, for a status line
@@ -150,15 +153,15 @@ directory whatever you were standing in when you set it.
 
 ### Reading
 
-`path` prints one directory and nothing else, so it composes:
+`get` prints one directory and nothing else, so it composes:
 
 ```bash
-cd "$(dir-mark path m)"
-ls "$(dir-mark path m)"
+cd "$(dir-mark get m)"
+ls "$(dir-mark get m)"
 ```
 
 It exits non-zero and says nothing on stdout if the character is not marked, so
-`cd "$(dir-mark path z)"` fails rather than sending you home.
+`cd "$(dir-mark get z)"` fails rather than sending you home.
 
 `list` is the whole store, one `char<TAB>directory` line at a time, sorted by character -- for
 scripts, and for looking at:

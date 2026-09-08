@@ -2,7 +2,7 @@
 #
 # dir-mark -- one printable character, one directory, the way vim marks do.
 #
-# A mark names a directory and nothing else. `dir-mark path m` prints the one
+# A mark names a directory and nothing else. `dir-mark get m` prints the one
 # `m` names and `dir-mark pick` asks with fzf, which makes both of them
 # pickers in the ordinary sense: a program that prints a path, ready to be
 # fed to anything that takes one.
@@ -18,7 +18,7 @@ dir-mark -- one character, one directory
 Usage
   dir-mark set <char> [path]     # Mark a directory (path defaults to the current directory)
   dir-mark remove <char>         # Remove a mark
-  dir-mark path <char>           # Print the directory a mark points at
+  dir-mark get <char>            # Print the directory a mark points at
   dir-mark pick                  # Choose a mark with fzf and print its directory (ctrl-x removes)
   dir-mark list                  # Every mark as "char<TAB>directory"
   dir-mark status [path]         # Marks with a tmux session open at them, for a status line
@@ -29,11 +29,11 @@ Marks
   A mark is one printable character pointing at one directory. Setting a
   character that is already set replaces it, the way `m` does in vim.
 
-  `path` and `pick` print a directory and nothing else, so they compose with
+  `get` and `pick` print a directory and nothing else, so they compose with
   anything that takes one:
 
-  cd "$(dir-mark path m)"
-  tsm via dir-mark path m
+  cd "$(dir-mark get m)"
+  tsm via dir-mark get m
   tsm via dir-mark pick
 
 Storage
@@ -311,11 +311,11 @@ mark_remove() {
   notify "Mark removed: $char"
 }
 
-mark_path() {
+mark_get() {
   # Print the directory a mark points at. A picker in its own right: it names
   # a directory and nothing else, so
   #
-  #   tsm via dir-mark path m
+  #   tsm via dir-mark get m
   #
   # goes straight to a session at whatever m marks, skipping the fzf `pick`
   # opens.
@@ -325,7 +325,7 @@ mark_path() {
   local char="$1"
 
   if [ -z "$char" ]; then
-    notify "Error: 'dir-mark path' needs a character"
+    notify "Error: 'dir-mark get' needs a character"
     exit 1
   fi
 
@@ -473,8 +473,8 @@ case "$command" in
   remove)
     mark_remove "$1"
     ;;
-  path)
-    mark_path "$1"
+  get)
+    mark_get "$1"
     ;;
   pick)
     if [ $# -gt 0 ]; then
