@@ -24,6 +24,7 @@ _dir_mark_commands() {
         'pick:Choose a mark with fzf and print its directory'
         'list:Every mark as "char<TAB>directory"'
         'status:Marks with a tmux session open at them, for a status line'
+        'status-init:Install the tmux hooks `status` needs'
         'help:Show help message'
     )
 

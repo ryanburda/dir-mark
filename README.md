@@ -36,7 +36,8 @@ curl -fsSL https://raw.githubusercontent.com/ryanburda/dir-mark/main/install.sh 
 This clones the repository to `${XDG_DATA_HOME:-~/.local/share}/dir-mark` and symlinks
 `dir-mark` into `~/.local/bin`. Re-run it any time to update.
 
-`dir-mark` is one bash script with no dependencies. `fzf` is needed for `dir-mark pick` and
+`dir-mark` is bash with no dependencies: the `dir-mark` script, and the `dir-mark-status`
+beside it holding everything that knows what tmux is. `fzf` is needed for `dir-mark pick` and
 `tmux` for `dir-mark status`; everything else runs with a shell and `awk`.
 
 <details>
@@ -56,6 +57,9 @@ Or manually: clone the repo, symlink `dir-mark` into a directory on your PATH.
 git clone https://github.com/ryanburda/dir-mark.git ~/git/dir-mark
 ln -s ~/git/dir-mark/dir-mark ~/.local/bin/dir-mark
 ```
+
+Symlink `dir-mark` itself, not a copy of it: it follows the link to find `dir-mark-status` in
+the checkout beside it.
 </details>
 
 <details>
@@ -134,6 +138,7 @@ dir-mark get <char>            # Print the directory a mark points at
 dir-mark pick                  # Choose a mark with fzf and print its directory
 dir-mark list                  # Every mark as "char<TAB>directory"
 dir-mark status [path]         # Marks with a tmux session open at them, for a status line
+dir-mark status-init           # Install the tmux hooks `status` needs (put this in tmux.conf)
 dir-mark help                  # Show help message
 ```
 
@@ -204,15 +209,23 @@ The path argument matters: tmux runs a `#()` command without a client and shares
 output between all of them, so `dir-mark` cannot ask which session is current and get a
 per-client answer. Passing `#{session_path}` is what makes the highlight follow each client.
 
-A status line is only redrawn every `status-interval` seconds. Two hooks make sessions opened or
-killed elsewhere appear immediately, on every attached client:
+A status line is only redrawn every `status-interval` seconds, so a session opened or killed
+elsewhere would take that long to appear. `dir-mark status-init` installs the two tmux hooks
+that make it immediate, on every attached client -- put it in `tmux.conf`, where it runs once
+per server:
 
 ```tmux
-set-hook -g session-created 'run-shell -b "dir-mark _refresh-status"'
-set-hook -g session-closed 'run-shell -b "dir-mark _refresh-status"'
+run-shell "dir-mark status-init"
 ```
 
-Setting and removing a mark refresh the line on their own.
+It hangs a refresh off `session-created` and `session-closed`, appending to both so anything
+else on them survives, and dropping the hooks a previous run left behind so re-sourcing
+`tmux.conf` does not stack duplicates. It is only needed for the status line; nothing else in
+`dir-mark` goes through a hook. Setting and removing a mark refresh the line on their own.
+
+**NOTE:** if your `tmux.conf` sets `session-created` or `session-closed` with a bare
+`set-hook -g`, put `run-shell "dir-mark status-init"` after it -- a later `set-hook -g` clears
+what dir-mark appended.
 
 ## Storage
 

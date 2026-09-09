@@ -11,6 +11,40 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dir-mark"
 MARKS_FILE="${DIR_MARK_FILE:-$STATE_DIR/marks.json}"
 mkdir -p "$(dirname "$MARKS_FILE")"
 
+dir_mark_dir() {
+  # The directory dir-mark itself lives in, symlinks followed: the installer
+  # links dir-mark into a directory on PATH, and dir-mark-status sits beside
+  # the file that link points at, not beside the link.
+  #
+  # readlink in a loop rather than `readlink -f`, which is GNU-only.
+  local self="$0" dir
+
+  case "$self" in
+    */*) ;;
+    *) self=$(command -v -- "$self" 2>/dev/null) || return 1 ;;
+  esac
+
+  while [ -L "$self" ]; do
+    dir=$(cd "$(dirname "$self")" && pwd -P) || return 1
+    self=$(readlink "$self") || return 1
+    case "$self" in
+      /*) ;;
+      *) self="$dir/$self" ;;
+    esac
+  done
+
+  (cd "$(dirname "$self")" && pwd -P)
+}
+
+# The tmux half of dir-mark: `status`, `status-init` and the refresh the hooks
+# it installs call back on. Sourced rather than run, for read_marks below.
+DIR_MARK_LIB=$(dir_mark_dir) && [ -f "$DIR_MARK_LIB/dir-mark-status" ] || {
+  echo "dir-mark: could not find dir-mark-status beside dir-mark" >&2
+  exit 1
+}
+# shellcheck source=dir-mark-status
+. "$DIR_MARK_LIB/dir-mark-status"
+
 usage() {
   cat <<'EOF'
 dir-mark -- one character, one directory
@@ -23,6 +57,7 @@ Usage
   dir-mark list                  # Every mark as "char<TAB>directory"
   dir-mark status [path]         # Marks with a tmux session open at them, for a status line
                                  # (-s, --style and -c, --current-style set its tmux styles)
+  dir-mark status-init           # Install the tmux hooks `status` needs (put this in tmux.conf)
   dir-mark help                  # Show help message
 
 Marks
@@ -58,30 +93,21 @@ notify() {
   fi
 }
 
-refresh_status() {
-  # Redraw every attached client's status line. tmux's own refresh-client
-  # reaches only one client, and a status line passing #{session_path} gives
-  # each client a #() job of its own, so all of them need the nudge. A no-op
-  # outside tmux, where there is nothing to redraw.
-  local client
-
-  while IFS= read -r client; do
-    [ -n "$client" ] && tmux refresh-client -S -t "$client" 2>/dev/null
-  done < <(tmux list-clients -F '#{client_name}' 2>/dev/null)
-}
-
 dir_mark_self() {
-  # Echo the path to re-run dir-mark by. A bare name is resolved against the
-  # current PATH, since fzf runs the command later in an environment whose
-  # PATH may differ.
+  # Echo the absolute path to re-run dir-mark by, or nothing with a non-zero
+  # status. Both callers run dir-mark later in an environment of their own --
+  # fzf in a shell, tmux in a hook -- and neither PATH need hold it.
+  #
+  # The symlink is not followed: the link the installer made is the name
+  # dir-mark is installed under.
   local self="$0"
 
   case "$self" in
     */*) ;;
-    *) self=$(command -v -- "$self" 2>/dev/null) || self="$0" ;;
+    *) self=$(command -v -- "$self" 2>/dev/null) || return 1 ;;
   esac
 
-  echo "$self"
+  printf '%s/%s\n' "$(cd "$(dirname "$self")" && pwd -P)" "$(basename "$self")"
 }
 
 check_mark_char() {
@@ -360,7 +386,8 @@ mark_pick() {
   # disk. fzf hands a binding to a shell, so dir-mark's path is quoted for
   # one; fzf itself quotes {1}.
   local self
-  printf -v self '%q' "$(dir_mark_self)"
+  self=$(dir_mark_self) || self="$0"
+  printf -v self '%q' "$self"
 
   local selected
   selected=$(printf '%s\n' "$entries" | fzf \
@@ -377,84 +404,6 @@ mark_pick() {
   # marked path rather than the ~ the row displayed.
   local row="${selected#*$'\t'}"
   printf '%s\n' "${row%%$'\t'*}"
-}
-
-mark_status() {
-  # Print the characters of the marks with a tmux session open at them, the
-  # current session's styled differently. Only marks with a session open are
-  # shown, so the line stays short. Nothing is notified: this runs on every
-  # status line redraw.
-  #
-  # Args:
-  #   $1: path: the directory of the session to treat as the current one
-  #       (default: the session tmux reports as current)
-  #   -s, --style: tmux style for the other sessions' characters
-  #   -c, --current-style: tmux style for the current session's character
-  local style="dim" current_style="fg=yellow,bold" current="" current_given=""
-
-  # Styles are given without their #[] wrapper, so a status line format
-  # holding one does not have to escape it.
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      -s | --style | -c | --current-style)
-        if [ $# -lt 2 ]; then
-          notify "Error: '$1' needs a tmux style"
-          exit 1
-        fi
-        case "$1" in
-          -s | --style) style="$2" ;;
-          -c | --current-style) current_style="$2" ;;
-        esac
-        shift 2
-        ;;
-      -*)
-        notify "Error: Unknown option '$1' for 'dir-mark status'"
-        exit 1
-        ;;
-      *)
-        if [ -n "$current_given" ]; then
-          notify "Error: Too many arguments for 'dir-mark status'"
-          exit 1
-        fi
-        current="$1"
-        current_given=1
-        shift
-        ;;
-    esac
-  done
-
-  local open
-  open=$(tmux list-sessions -F '#{session_path}' 2>/dev/null)
-  [ -n "$open" ] || return 0
-
-  # Which session is current must be given by whoever draws the status line:
-  # tmux runs a #() command without a client and shares its output between
-  # them all, so asking here would answer the same for every client. A status
-  # line passes #{session_path}, expanded per client. Asking is the fallback
-  # for a shell with a session of its own.
-  if [ -z "$current_given" ] && [ -n "$TMUX" ]; then
-    current=$(tmux display-message -p '#{session_path}' 2>/dev/null)
-  fi
-
-  # Each character is padded inside its own style, so a style with a
-  # background reads as a block. Each style is preceded by a reset, because
-  # tmux styles accumulate.
-  read_marks | DIR_MARK_OPEN_PATHS="$open" DIR_MARK_CURRENT_PATH="$current" \
-    DIR_MARK_STYLE="$style" DIR_MARK_CURRENT_STYLE="$current_style" awk -F'\t' '
-      BEGIN {
-        n = split(ENVIRON["DIR_MARK_OPEN_PATHS"], paths, "\n")
-        for (i = 1; i <= n; i++) if (paths[i] != "") open[paths[i]]
-        current = ENVIRON["DIR_MARK_CURRENT_PATH"]
-        style = ENVIRON["DIR_MARK_STYLE"]
-        current_style = ENVIRON["DIR_MARK_CURRENT_STYLE"]
-      }
-
-      $2 in open {
-        out = out "#[default]#[" (current != "" && $2 == current ? current_style : style) "] " $1 " "
-      }
-
-      END { if (out != "") print out "#[default]" }
-    '
 }
 
 # Parse arguments
@@ -489,13 +438,19 @@ case "$command" in
   status)
     mark_status "$@"
     ;;
+  status-init)
+    if [ $# -gt 0 ]; then
+      notify "Error: 'dir-mark status-init' takes no arguments"
+      exit 1
+    fi
+    status_init
+    ;;
   _entries)
     # Internal: rebuilds the picker's rows for its reload binding.
     mark_entries
     ;;
-  _refresh-status)
-    # Internal: invoked by the session-created/session-closed hooks (see
-    # README).
+  "$HOOK_REFRESH")
+    # Internal: invoked by the hooks `dir-mark status-init` installs.
     refresh_status
     ;;
   help | -h | --help)

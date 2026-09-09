@@ -47,6 +47,9 @@ dest="$BIN_DIR/dir-mark"
 
 [ -f "$src" ] || die "expected $src to exist"
 
+# Only dir-mark is linked; it follows the link back here to find its tmux half.
+[ -f "$DIR_MARK_HOME/dir-mark-status" ] || die "expected $DIR_MARK_HOME/dir-mark-status to exist"
+
 if [ -e "$dest" ] && [ ! -L "$dest" ]; then
     die "$dest exists and is not a symlink; remove it and retry"
 fi

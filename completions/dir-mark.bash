@@ -14,7 +14,7 @@ _dir_mark_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     cmd="${COMP_WORDS[1]}"
 
-    subcmds="set remove get pick list status help"
+    subcmds="set remove get pick list status status-init help"
 
     # Completing the subcommand itself
     if [ "$COMP_CWORD" -eq 1 ]; then

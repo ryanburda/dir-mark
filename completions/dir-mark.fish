@@ -19,6 +19,7 @@ complete -c dir-mark -n '__fish_use_subcommand' -a get -d 'Print the directory a
 complete -c dir-mark -n '__fish_use_subcommand' -a pick -d 'Choose a mark with fzf and print its directory'
 complete -c dir-mark -n '__fish_use_subcommand' -a list -d 'Every mark as "char<TAB>directory"'
 complete -c dir-mark -n '__fish_use_subcommand' -a status -d 'Marks with a tmux session open at them, for a status line'
+complete -c dir-mark -n '__fish_use_subcommand' -a status-init -d 'Install the tmux hooks `status` needs'
 complete -c dir-mark -n '__fish_use_subcommand' -a help -d 'Show help message'
 
 # Subcommand arguments
