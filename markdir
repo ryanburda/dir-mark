@@ -68,8 +68,8 @@ Marks
   anything that takes one:
 
   cd "$(markdir get m)"
-  tsm via markdir get m
-  tsm via markdir pick
+  dirsesh at $(markdir get m)
+  dirsesh at $(markdir pick)
 
 Storage
   ${XDG_STATE_HOME:-~/.local/state}/markdir/marks.json, or $MARKDIR_FILE.
@@ -341,7 +341,7 @@ mark_get() {
   # Print the directory a mark points at. A picker in its own right: it names
   # a directory and nothing else, so
   #
-  #   tsm via markdir get m
+  #   dirsesh att $(markdir get m)
   #
   # goes straight to a session at whatever m marks, skipping the fzf `pick`
   # opens.

@@ -1,7 +1,7 @@
 # markdir
 
 A directory bookmarking tool intended to be used with
-[tmux-session-manager](https://github.com/ryanburda/tmux-session-manager)
+[tmux-dirsesh](https://github.com/ryanburda/tmux-dirsesh)
 
 `markdir` maps one printable character to one directory, the way vim marks do. That's its
 whole job.
@@ -22,8 +22,8 @@ everything downstream:
 
 ```bash
 cd "$(markdir pick)"                  # choose one with fzf
-tsm via markdir get m                # a tmux session at whatever m marks
-tsm via markdir pick                  # ...or at one you choose
+dirsesh at $(markdir get m)           # a tmux session at whatever m marks
+dirsesh at $(markdir pick)            # ...or at one you choose
 nvim "$(markdir get n)/init.lua"
 ```
 
@@ -99,15 +99,15 @@ tmux that is what `command-prompt -1` is for, which reaches all three by a singl
 ```tmux
 bind-key m command-prompt -1 -p "Set mark:"    "run-shell -b \"markdir set '%%%'\""
 bind-key M command-prompt -1 -p "Remove mark:" "run-shell -b \"markdir remove '%%%'\""
-bind-key \' command-prompt -1 -p "Go to mark:" "run-shell -b \"tsm via markdir get '%%%'\""
-bind-key b popup -E "tsm via markdir pick"
+bind-key \' command-prompt -1 -p "Go to mark:" "run-shell -b \"dirsesh at $(markdir get '%%%'\")"
+bind-key b popup -E "dirsesh at $(markdir pick)"
 ```
 
 These ask in tmux's status line, so they need no popup: `-1` takes exactly one key and `%%%`
 substitutes it with quotation marks escaped. `'` and `;` are the two keys that cannot be
 answered with -- `;` is tmux's own command separator -- so do not mark at those.
 
-The last two lines send the directory to [`tsm`][tsm], which opens a tmux session there.
+The last two lines send the directory to [`dirsesh`][dirsesh], which opens a tmux session there.
 Anything that takes a path works the same way; `markdir` itself does not know what tmux is,
 apart from `status` below.
 
@@ -185,7 +185,7 @@ under the cursor and rebuilds the list, which is how a mark you have stopped usi
 up without having to remember which character it was.
 
 Backing out prints nothing and exits 0 -- the way any picker declines to answer -- so
-`tsm via markdir pick` opens nothing when you press escape, rather than erroring.
+`dirsesh at $(markdir pick)` opens nothing when you press escape, rather than erroring.
 
 ### Status Line (`markdir status`)
 
@@ -243,32 +243,9 @@ It is written whole through a temp file, so an interrupted write leaves the prev
 rather than half a file. Editing it by hand is fine; `markdir` reads it with `awk` rather than
 `jq`, and drops any pair whose key is not a single character or whose value is empty.
 
-Coming from `tsm`'s old `bookmark-*` subcommands, the store moves as-is -- same format, same
-character-to-directory pairs:
-
-```bash
-mkdir -p ~/.local/state/markdir
-mv ~/.local/state/tsm/bookmarks.json ~/.local/state/markdir/marks.json
-```
-
 `MARKDIR_FILE` points at a different file, which is what to set for a per-project or
 per-machine set of marks:
 
 ```bash
 MARKDIR_FILE=~/.config/work-marks.json markdir set m ~/work/api
 ```
-
-## Why a separate tool
-
-`markdir` used to be four subcommands inside [`tsm`][tsm], where it was the odd one out: every
-other part of `tsm` is about the tmux session that follows a directory, and marks are only about
-naming the directory. Pulling them apart left `tsm` with one contract -- *hand me a program that
-prints a path* -- and left the marks usable from `cd`, an editor, a script, or nothing at all.
-
-```bash
-tsm via markdir pick
-```
-
-is the whole of the integration between them, and it is the same line anything else would use.
-
-[tsm]: https://github.com/ryanburda/tmux-session-manager
