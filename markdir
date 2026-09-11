@@ -1,19 +1,19 @@
 #!/bin/bash
 #
-# dir-mark -- one printable character, one directory, the way vim marks do.
+# markdir -- one printable character, one directory, the way vim marks do.
 #
-# A mark names a directory and nothing else. `dir-mark get m` prints the one
-# `m` names and `dir-mark pick` asks with fzf, which makes both of them
+# A mark names a directory and nothing else. `markdir get m` prints the one
+# `m` names and `markdir pick` asks with fzf, which makes both of them
 # pickers in the ordinary sense: a program that prints a path, ready to be
 # fed to anything that takes one.
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dir-mark"
-MARKS_FILE="${DIR_MARK_FILE:-$STATE_DIR/marks.json}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/markdir"
+MARKS_FILE="${MARKDIR_FILE:-$STATE_DIR/marks.json}"
 mkdir -p "$(dirname "$MARKS_FILE")"
 
-dir_mark_dir() {
-  # The directory dir-mark itself lives in, symlinks followed: the installer
-  # links dir-mark into a directory on PATH, and dir-mark-status sits beside
+markdir_dir() {
+  # The directory markdir itself lives in, symlinks followed: the installer
+  # links markdir into a directory on PATH, and markdir-status sits beside
   # the file that link points at, not beside the link.
   #
   # readlink in a loop rather than `readlink -f`, which is GNU-only.
@@ -36,29 +36,29 @@ dir_mark_dir() {
   (cd "$(dirname "$self")" && pwd -P)
 }
 
-# The tmux half of dir-mark: `status`, `status-init` and the refresh the hooks
+# The tmux half of markdir: `status`, `status-init` and the refresh the hooks
 # it installs call back on. Sourced rather than run, for read_marks below.
-DIR_MARK_LIB=$(dir_mark_dir) && [ -f "$DIR_MARK_LIB/dir-mark-status" ] || {
-  echo "dir-mark: could not find dir-mark-status beside dir-mark" >&2
+MARKDIR_LIB=$(markdir_dir) && [ -f "$MARKDIR_LIB/markdir-status" ] || {
+  echo "markdir: could not find markdir-status beside markdir" >&2
   exit 1
 }
-# shellcheck source=dir-mark-status
-. "$DIR_MARK_LIB/dir-mark-status"
+# shellcheck source=markdir-status
+. "$MARKDIR_LIB/markdir-status"
 
 usage() {
   cat <<'EOF'
-dir-mark -- one character, one directory
+markdir -- one character, one directory
 
 Usage
-  dir-mark set <char> [path]     # Mark a directory (path defaults to the current directory)
-  dir-mark remove <char>         # Remove a mark
-  dir-mark get <char>            # Print the directory a mark points at
-  dir-mark pick                  # Choose a mark with fzf and print its directory (ctrl-x removes)
-  dir-mark list                  # Every mark as "char<TAB>directory"
-  dir-mark status [path]         # Marks with a tmux session open at them, for a status line
-                                 # (-s, --style and -c, --current-style set its tmux styles)
-  dir-mark status-init           # Install the tmux hooks `status` needs (put this in tmux.conf)
-  dir-mark help                  # Show help message
+  markdir set <char> [path]     # Mark a directory (path defaults to the current directory)
+  markdir remove <char>         # Remove a mark
+  markdir get <char>            # Print the directory a mark points at
+  markdir pick                  # Choose a mark with fzf and print its directory (ctrl-x removes)
+  markdir list                  # Every mark as "char<TAB>directory"
+  markdir status [path]         # Marks with a tmux session open at them, for a status line
+                                # (-s, --style and -c, --current-style set its tmux styles)
+  markdir status-init           # Install the tmux hooks `status` needs (put this in tmux.conf)
+  markdir help                  # Show help message
 
 Marks
   A mark is one printable character pointing at one directory. Setting a
@@ -67,14 +67,14 @@ Marks
   `get` and `pick` print a directory and nothing else, so they compose with
   anything that takes one:
 
-  cd "$(dir-mark get m)"
-  tsm via dir-mark get m
-  tsm via dir-mark pick
+  cd "$(markdir get m)"
+  tsm via markdir get m
+  tsm via markdir pick
 
 Storage
-  ${XDG_STATE_HOME:-~/.local/state}/dir-mark/marks.json, or $DIR_MARK_FILE.
+  ${XDG_STATE_HOME:-~/.local/state}/markdir/marks.json, or $MARKDIR_FILE.
 
-See https://github.com/ryanburda/dir-mark for more documentation
+See https://github.com/ryanburda/markdir for more documentation
 EOF
 }
 
@@ -93,13 +93,13 @@ notify() {
   fi
 }
 
-dir_mark_self() {
-  # Echo the absolute path to re-run dir-mark by, or nothing with a non-zero
-  # status. Both callers run dir-mark later in an environment of their own --
+markdir_self() {
+  # Echo the absolute path to re-run markdir by, or nothing with a non-zero
+  # status. Both callers run markdir later in an environment of their own --
   # fzf in a shell, tmux in a hook -- and neither PATH need hold it.
   #
   # The symlink is not followed: the link the installer made is the name
-  # dir-mark is installed under.
+  # markdir is installed under.
   local self="$0"
 
   case "$self" in
@@ -137,7 +137,7 @@ read_marks() {
   # rather than with jq to avoid the dependency: the file holds only strings,
   # and only the escapes write_marks produces. A pair whose key is not a
   # single character, or whose value is empty or holds a tab or newline, is
-  # dropped: dir-mark cannot write one, and it would split a line callers
+  # dropped: markdir cannot write one, and it would split a line callers
   # read whole.
   [ -f "$MARKS_FILE" ] || return 0
 
@@ -236,8 +236,8 @@ without_mark() {
   #
   # Args:
   #   $1: char: the mark character to drop
-  DIR_MARK_CHAR="$1" awk -F'\t' '
-    BEGIN { char = ENVIRON["DIR_MARK_CHAR"] }
+  MARKDIR_CHAR="$1" awk -F'\t' '
+    BEGIN { char = ENVIRON["MARKDIR_CHAR"] }
     $1 != char
   '
 }
@@ -289,11 +289,11 @@ mark_set() {
       ;;
   esac
 
-  # dir-mark does not ask for the character itself: inside tmux a key binding
+  # markdir does not ask for the character itself: inside tmux a key binding
   # asks with command-prompt -1 and passes the answer in (see the README),
   # which is the only way it was ever reached.
   if [ -z "$char" ]; then
-    notify "Error: 'dir-mark set' needs a character to mark ${path/#"$HOME"/\~} at"
+    notify "Error: 'markdir set' needs a character to mark ${path/#"$HOME"/\~} at"
     exit 1
   fi
 
@@ -319,7 +319,7 @@ mark_remove() {
   local char="$1"
 
   if [ -z "$char" ]; then
-    notify "Error: 'dir-mark remove' needs a character"
+    notify "Error: 'markdir remove' needs a character"
     exit 1
   fi
 
@@ -341,7 +341,7 @@ mark_get() {
   # Print the directory a mark points at. A picker in its own right: it names
   # a directory and nothing else, so
   #
-  #   tsm via dir-mark get m
+  #   tsm via markdir get m
   #
   # goes straight to a session at whatever m marks, skipping the fzf `pick`
   # opens.
@@ -351,7 +351,7 @@ mark_get() {
   local char="$1"
 
   if [ -z "$char" ]; then
-    notify "Error: 'dir-mark get' needs a character"
+    notify "Error: 'markdir get' needs a character"
     exit 1
   fi
 
@@ -370,7 +370,7 @@ mark_pick() {
   # Choose a mark with fzf and print its directory. Backing out prints
   # nothing and succeeds, the way any picker declines to answer.
   if ! command -v fzf > /dev/null 2>&1; then
-    notify "Error: 'dir-mark pick' needs fzf on PATH"
+    notify "Error: 'markdir pick' needs fzf on PATH"
     exit 1
   fi
 
@@ -383,10 +383,10 @@ mark_pick() {
   fi
 
   # ctrl-x removes the mark under the cursor, then rebuilds the list from
-  # disk. fzf hands a binding to a shell, so dir-mark's path is quoted for
+  # disk. fzf hands a binding to a shell, so markdir's path is quoted for
   # one; fzf itself quotes {1}.
   local self
-  self=$(dir_mark_self) || self="$0"
+  self=$(markdir_self) || self="$0"
   printf -v self '%q' "$self"
 
   local selected
@@ -427,7 +427,7 @@ case "$command" in
     ;;
   pick)
     if [ $# -gt 0 ]; then
-      notify "Error: 'dir-mark pick' takes no arguments"
+      notify "Error: 'markdir pick' takes no arguments"
       exit 1
     fi
     mark_pick
@@ -440,7 +440,7 @@ case "$command" in
     ;;
   status-init)
     if [ $# -gt 0 ]; then
-      notify "Error: 'dir-mark status-init' takes no arguments"
+      notify "Error: 'markdir status-init' takes no arguments"
       exit 1
     fi
     status_init
@@ -450,7 +450,7 @@ case "$command" in
     mark_entries
     ;;
   "$HOOK_REFRESH")
-    # Internal: invoked by the hooks `dir-mark status-init` installs.
+    # Internal: invoked by the hooks `markdir status-init` installs.
     refresh_status
     ;;
   help | -h | --help)

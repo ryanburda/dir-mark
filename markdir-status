@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# dir-mark-status -- the tmux half of dir-mark.
+# markdir-status -- the tmux half of markdir.
 #
-# Sourced by dir-mark rather than run: it reads marks through `read_marks` and
-# reports through `notify`, both of which live in dir-mark itself. Everything
-# that knows what tmux is lives here, so the rest of dir-mark is a program that
+# Sourced by markdir rather than run: it reads marks through `read_marks` and
+# reports through `notify`, both of which live in markdir itself. Everything
+# that knows what tmux is lives here, so the rest of markdir is a program that
 # maps characters to directories and nothing more.
 
-# The internal verb the hooks call back on. Also the string `dir-mark
+# The internal verb the hooks call back on. Also the string `markdir
 # status-init` greps for to recognise a hook it installed before.
 HOOK_REFRESH=_refresh-status
 
@@ -27,14 +27,14 @@ refresh_status() {
 }
 
 install_status_hook() {
-  # Point one global tmux hook at dir-mark's refresh verb. Appended, so
-  # anyone else's hooks on it survive; any hook a previous `dir-mark
+  # Point one global tmux hook at markdir's refresh verb. Appended, so
+  # anyone else's hooks on it survive; any hook a previous `markdir
   # status-init` left on it is dropped first, so re-sourcing tmux.conf does not
   # stack duplicates.
   #
   # Args:
   #   $1: hook: the tmux hook name
-  #   $2: self: absolute path to dir-mark
+  #   $2: self: absolute path to markdir
   local hook="$1" self="$2"
 
   # Unsetting an array element leaves the others at their own indexes, so the
@@ -58,19 +58,19 @@ status_init() {
   # Install the tmux hooks that keep the status line current. Meant for
   # tmux.conf, where it runs once per server:
   #
-  #   run-shell "dir-mark status-init"
+  #   run-shell "markdir status-init"
   #
   # A status line is only redrawn every status-interval seconds, so a session
   # opened or killed elsewhere would otherwise take that long to show up in
-  # `dir-mark status`. session-created and session-closed are the two moments
-  # its answer changes without dir-mark being involved; setting and removing a
+  # `markdir status`. session-created and session-closed are the two moments
+  # its answer changes without markdir being involved; setting and removing a
   # mark refresh the line on their own.
   #
   # Both hooks are global: a session's own options are already freed when
   # session-closed fires, so a hook set on the session never runs at all.
   local self
-  if ! self=$(dir_mark_self); then
-    notify "Error: could not resolve the path to dir-mark"
+  if ! self=$(markdir_self); then
+    notify "Error: could not resolve the path to markdir"
     exit 1
   fi
 
@@ -107,12 +107,12 @@ mark_status() {
         shift 2
         ;;
       -*)
-        notify "Error: Unknown option '$1' for 'dir-mark status'"
+        notify "Error: Unknown option '$1' for 'markdir status'"
         exit 1
         ;;
       *)
         if [ -n "$current_given" ]; then
-          notify "Error: Too many arguments for 'dir-mark status'"
+          notify "Error: Too many arguments for 'markdir status'"
           exit 1
         fi
         current="$1"
@@ -138,14 +138,14 @@ mark_status() {
   # Each character is padded inside its own style, so a style with a
   # background reads as a block. Each style is preceded by a reset, because
   # tmux styles accumulate.
-  read_marks | DIR_MARK_OPEN_PATHS="$open" DIR_MARK_CURRENT_PATH="$current" \
-    DIR_MARK_STYLE="$style" DIR_MARK_CURRENT_STYLE="$current_style" awk -F'\t' '
+  read_marks | MARKDIR_OPEN_PATHS="$open" MARKDIR_CURRENT_PATH="$current" \
+    MARKDIR_STYLE="$style" MARKDIR_CURRENT_STYLE="$current_style" awk -F'\t' '
       BEGIN {
-        n = split(ENVIRON["DIR_MARK_OPEN_PATHS"], paths, "\n")
+        n = split(ENVIRON["MARKDIR_OPEN_PATHS"], paths, "\n")
         for (i = 1; i <= n; i++) if (paths[i] != "") open[paths[i]]
-        current = ENVIRON["DIR_MARK_CURRENT_PATH"]
-        style = ENVIRON["DIR_MARK_STYLE"]
-        current_style = ENVIRON["DIR_MARK_CURRENT_STYLE"]
+        current = ENVIRON["MARKDIR_CURRENT_PATH"]
+        style = ENVIRON["MARKDIR_STYLE"]
+        current_style = ENVIRON["MARKDIR_CURRENT_STYLE"]
       }
 
       $2 in open {

@@ -1,14 +1,14 @@
-# Bash completion for dir-mark
+# Bash completion for markdir
 # Source this file in your .bashrc:
-#   source /path/to/dir-mark.bash
-# Or copy to /etc/bash_completion.d/dir-mark
+#   source /path/to/markdir.bash
+# Or copy to /etc/bash_completion.d/markdir
 
-_dir_mark_chars() {
+_markdir_chars() {
     # Every mark as "char<TAB>directory"; the character is the first field.
-    dir-mark list 2>/dev/null | cut -f1
+    markdir list 2>/dev/null | cut -f1
 }
 
-_dir_mark_completions() {
+_markdir_completions() {
     local cur cmd subcmds
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
@@ -25,7 +25,7 @@ _dir_mark_completions() {
     # Completing an argument to a subcommand
     case "$cmd" in
         remove|get)
-            COMPREPLY=($(compgen -W "$(_dir_mark_chars)" -- "$cur"))
+            COMPREPLY=($(compgen -W "$(_markdir_chars)" -- "$cur"))
             return 0
             ;;
         set)
@@ -43,4 +43,4 @@ _dir_mark_completions() {
     esac
 }
 
-complete -F _dir_mark_completions dir-mark
+complete -F _markdir_completions markdir
