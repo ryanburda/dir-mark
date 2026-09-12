@@ -150,9 +150,10 @@ markdir set m ~/code/api      # ...or one you name
 markdir remove m
 ```
 
-A mark is keyed by a single printable ASCII character -- any of `!` through `~`, so digits and
-punctuation work as well as letters, and upper and lower case are two different marks. Setting a
-character that is already set replaces it, no confirmation, the same way `m` does in vim. The
+A mark is keyed by a single printable ASCII character -- any of `!` through `~` except `/` and
+`.`, which can't name the file a mark is stored in -- so digits and punctuation work as well as
+letters, and upper and lower case are two different marks. Setting a character that is already
+set replaces it, no confirmation, the same way `m` does in vim. The
 path is resolved to an absolute one with symlinks followed, so a mark keeps pointing at the same
 directory whatever you were standing in when you set it.
 
@@ -229,23 +230,24 @@ what markdir appended.
 
 ## Storage
 
-Marks live in `${XDG_STATE_HOME:-~/.local/state}/markdir/marks.json`, a flat JSON object of
-character to directory:
+Each mark is a file named after its character, holding the directory it points at, in
+`${XDG_STATE_HOME:-~/.local/state}/markdir`:
 
-```json
-{
-  "c": "/home/you/.config",
-  "m": "/home/you/code/api"
-}
+```
+$ ls ~/.local/state/markdir
+c  m
+$ cat ~/.local/state/markdir/m
+/home/you/code/api
 ```
 
-It is written whole through a temp file, so an interrupted write leaves the previous marks
-rather than half a file. Editing it by hand is fine; `markdir` reads it with `awk` rather than
-`jq`, and drops any pair whose key is not a single character or whose value is empty.
+Each mark is written whole through a temp file, so an interrupted write leaves the previous
+mark rather than half a file. Editing a mark's file by hand is fine; anything in the directory
+whose name is not a single character valid in a file name (not `/` or `.`), or whose contents
+are empty, is not a mark and is ignored.
 
-`MARKDIR_FILE` points at a different file, which is what to set for a per-project or
+`MARKDIR_DIR` points at a different directory, which is what to set for a per-project or
 per-machine set of marks:
 
 ```bash
-MARKDIR_FILE=~/.config/work-marks.json markdir set m ~/work/api
+MARKDIR_DIR=~/.config/work-marks markdir set m ~/work/api
 ```

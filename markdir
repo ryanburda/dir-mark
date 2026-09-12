@@ -7,9 +7,8 @@
 # pickers in the ordinary sense: a program that prints a path, ready to be
 # fed to anything that takes one.
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/markdir"
-MARKS_FILE="${MARKDIR_FILE:-$STATE_DIR/marks.json}"
-mkdir -p "$(dirname "$MARKS_FILE")"
+MARKS_DIR="${MARKDIR_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/markdir}"
+mkdir -p "$MARKS_DIR"
 
 markdir_dir() {
   # The directory markdir itself lives in, symlinks followed: the installer
@@ -72,7 +71,7 @@ Marks
   dirsesh at $(markdir pick)
 
 Storage
-  ${XDG_STATE_HOME:-~/.local/state}/markdir/marks.json, or $MARKDIR_FILE.
+  ${XDG_STATE_HOME:-~/.local/state}/markdir/<char>, or $MARKDIR_DIR/<char>.
 
 See https://github.com/ryanburda/markdir for more documentation
 EOF
@@ -110,107 +109,60 @@ markdir_self() {
   printf '%s/%s\n' "$(cd "$(dirname "$self")" && pwd -P)" "$(basename "$self")"
 }
 
-check_mark_char() {
-  # Exit unless $1 can key a mark: a single printable ASCII character.
-  # Checked by code point rather than a [!-~] range, which outside the C
-  # locale is read in collation order.
+is_mark_char() {
+  # Succeed if $1 is a single printable ASCII character that also names a
+  # file safely: not '/', a path separator, and not '.', which alone names
+  # the directory a mark file lives in rather than a mark.
+  #
+  # Printability is checked by code point rather than a [!-~] range, which
+  # outside the C locale is read in collation order; '/' and '.' are ruled
+  # out by regex instead, since neither depends on locale.
   #
   # Args:
   #   $1: char: the character to check
   local char="$1" code
 
-  if [ "${#char}" -eq 1 ]; then
-    code=$(printf '%d' "'$char" 2>/dev/null)
-    if [ -n "$code" ] && [ "$code" -ge 33 ] && [ "$code" -le 126 ]; then
-      return 0
-    fi
-  fi
+  [ "${#char}" -eq 1 ] || return 1
+  [[ "$char" =~ ^[/.]$ ]] && return 1
 
-  notify "Error: a mark is keyed by a single printable character"
-  exit 1
+  code=$(printf '%d' "'$char" 2>/dev/null)
+  [ -n "$code" ] && [ "$code" -ge 33 ] && [ "$code" -le 126 ]
+}
+
+check_mark_char() {
+  # Exit unless $1 can key a mark; see is_mark_char.
+  #
+  # Args:
+  #   $1: char: the character to check
+  local char="$1"
+
+  if ! is_mark_char "$char"; then
+    notify "Error: a mark is keyed by a single printable character, not '/' or '.'"
+    exit 1
+  fi
 }
 
 read_marks() {
   # Emit one "char<TAB>directory" line per mark, sorted by character.
   #
-  # Marks are a flat JSON object of character -> directory, parsed here
-  # rather than with jq to avoid the dependency: the file holds only strings,
-  # and only the escapes write_marks produces. A pair whose key is not a
-  # single character, or whose value is empty or holds a tab or newline, is
-  # dropped: markdir cannot write one, and it would split a line callers
-  # read whole.
-  [ -f "$MARKS_FILE" ] || return 0
+  # A mark is a file at $MARKS_DIR/<char> holding the directory it names.
+  # Anything in $MARKS_DIR whose name is not a valid mark character, or
+  # whose contents are empty or hold a tab or newline, is dropped: markdir
+  # cannot write one, and it would split a line callers read whole.
+  local file char dir
 
-  awk '
-    { json = json $0 "\n" }
+  for file in "$MARKS_DIR"/*; do
+    [ -f "$file" ] || continue
+    char=$(basename "$file")
+    is_mark_char "$char" || continue
 
-    # Decodes the JSON string starting at i (its opening quote), leaving i on
-    # the character after its closing quote.
-    function read_string(   out, c, e) {
-      out = ""
-      i++
-      while (i <= n) {
-        c = substr(json, i, 1)
-        if (c == "\"") { i++; break }
-        if (c == "\\") {
-          e = substr(json, i + 1, 1)
-          if (e == "n") c = "\n"
-          else if (e == "t") c = "\t"
-          else if (e == "r") c = "\r"
-          else if (e == "b") c = "\b"
-          else if (e == "f") c = "\f"
-          else c = e
-          i++
-        }
-        out = out c
-        i++
-      }
-      return out
-    }
+    dir=$(cat "$file" 2>/dev/null)
+    case "$dir" in
+      "" | *[$'\t\n']*) continue ;;
+    esac
 
-    END {
-      n = length(json)
-      i = 1
-
-      # The object is flat, so its strings alternate key, value.
-      while (i <= n) {
-        if (substr(json, i, 1) != "\"") { i++; continue }
-        key = read_string()
-
-        # Skip the colon and whitespace between key and value.
-        while (i <= n && substr(json, i, 1) != "\"") i++
-        if (i > n) break
-        val = read_string()
-
-        if (length(key) == 1 && val != "" && val !~ /[\t\n]/) print key "\t" val
-      }
-    }
-  ' "$MARKS_FILE" | LC_ALL=C sort
-}
-
-write_marks() {
-  # Read "char<TAB>directory" lines on stdin and replace the store with them.
-  # Written to a temp file and moved into place, so an interrupted write
-  # leaves the old marks rather than half a file.
-  local tmp="$MARKS_FILE.tmp"
-
-  awk -F'\t' '
-    # A character at a time rather than gsub, whose replacement text has
-    # escaping rules of its own.
-    function escape(s,   out, i, c) {
-      out = ""
-      for (i = 1; i <= length(s); i++) {
-        c = substr(s, i, 1)
-        if (c == "\"" || c == "\\") out = out "\\"
-        out = out c
-      }
-      return out
-    }
-
-    BEGIN { printf "{\n" }
-    NF >= 2 { printf "%s  \"%s\": \"%s\"", (count++ ? ",\n" : ""), escape($1), escape($2) }
-    END { printf "%s}\n", (count ? "\n" : "") }
-  ' > "$tmp" && mv "$tmp" "$MARKS_FILE"
+    printf '%s\t%s\n' "$char" "$dir"
+  done | LC_ALL=C sort
 }
 
 mark_directory() {
@@ -218,28 +170,15 @@ mark_directory() {
   #
   # Args:
   #   $1: char: the mark character to look up
-  local char="$1" c dir
+  local char="$1" file dir
 
-  while IFS=$'\t' read -r c dir; do
-    if [ "$c" = "$char" ]; then
-      echo "$dir"
-      return 0
-    fi
-  done < <(read_marks)
+  file="$MARKS_DIR/$char"
+  [ -f "$file" ] || return 1
 
-  return 1
-}
+  dir=$(cat "$file" 2>/dev/null)
+  [ -n "$dir" ] || return 1
 
-without_mark() {
-  # Filter "char<TAB>directory" lines on stdin, dropping the mark keyed by
-  # $1. Passed via the environment: -v would expand backslashes.
-  #
-  # Args:
-  #   $1: char: the mark character to drop
-  MARKDIR_CHAR="$1" awk -F'\t' '
-    BEGIN { char = ENVIRON["MARKDIR_CHAR"] }
-    $1 != char
-  '
+  printf '%s\n' "$dir"
 }
 
 mark_entries() {
@@ -280,8 +219,7 @@ mark_set() {
   fi
 
   # Rejected rather than escaped: a control character would have to survive
-  # JSON, whole-line reads, and the picker, and no directory worth marking
-  # has one.
+  # a whole-line read and the picker, and no directory worth marking has one.
   case "$path" in
     *[[:cntrl:]]*)
       notify "Error: '$path' cannot be marked: its path contains a control character"
@@ -299,10 +237,10 @@ mark_set() {
 
   check_mark_char "$char"
 
-  {
-    read_marks | without_mark "$char"
-    printf '%s\t%s\n' "$char" "$path"
-  } | LC_ALL=C sort | write_marks
+  # Written to a temp file and moved into place, so an interrupted write
+  # leaves the old mark rather than half a file.
+  local tmp="$MARKS_DIR/.$char.tmp"
+  printf '%s\n' "$path" > "$tmp" && mv "$tmp" "$MARKS_DIR/$char"
 
   # What the status line shows just changed, and no session was created or
   # killed for a tmux hook to notice it.
@@ -330,7 +268,7 @@ mark_remove() {
     exit 1
   fi
 
-  read_marks | without_mark "$char" | write_marks
+  rm -f "$MARKS_DIR/$char"
 
   refresh_status
 
